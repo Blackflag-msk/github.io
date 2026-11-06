@@ -425,6 +425,18 @@ function idbSet(key,val){
     }catch(e){res(false)}
   });
 }
+function idbDel(key){
+  return new Promise(function(res){
+    if(!idbDb){res(false);return}
+    try{
+      var tx=idbDb.transaction(IDB_STORE,'readwrite');
+      tx.objectStore(IDB_STORE).delete(key);
+      tx.oncomplete=function(){res(true)};
+      tx.onerror=tx.onabort=function(){res(false)};
+    }catch(e){res(false)}
+  });
+}
+
 var storeWarned=false;
 function storeFail(){
   if(storeWarned)return; storeWarned=true;
@@ -473,6 +485,28 @@ function prepareStore(){
     idbReady=true;
     Object.keys(bookPending).forEach(function(k){ bookPending[k]=false; if(k in bookCache)writeBookKey(k) });
   });
+}
+/* Демонстрационное издание раньше было зашито в читалку и осело в кэшах.
+   Узнаём его по названию и стираем: иначе вместо опубликованной книги
+   читатель снова видел бы тестовый отрывок. */
+var DEMO_TITLES={'Остров на краю карты':1,'Остров на краю кота':1};
+function isDemoBook(b){
+  if(!b)return false;
+  if(DEMO_TITLES[b.title])return true;
+  return Array.isArray(b.chapters)&&b.chapters.length===1&&b.chapters[0].title==='Death Rides';
+}
+function dropDemoCache(){
+  var jobs=[];
+  ['ru','en'].forEach(function(l){
+    var k='pereplet.book.'+l;
+    if(!isDemoBook(lsGet(k)))return;
+    delete bookCache[k];
+    try{localStorage.removeItem(k)}catch(e){}
+    try{localStorage.removeItem('pereplet.meta.'+l)}catch(e){}
+    try{localStorage.removeItem('pereplet.mark.'+l)}catch(e){}
+    jobs.push(idbDel(k));
+  });
+  return Promise.all(jobs);
 }
 /* Дебаунс записи не должен потерять правки при закрытии вкладки. */
 function flushStore(){
@@ -530,16 +564,9 @@ function initCred(){ cred=lsGet(LS_CRED); if(!cred){var salt=makeSalt(); cred={s
 function pwIssues(v){ var out=[]; if(v.length<8)out.push('длина'); if(!/[A-Z]/.test(v))out.push('заглавная латинская'); if(!/[a-z]/.test(v))out.push('строчная латинская'); if(!/[0-9]/.test(v))out.push('цифра'); if(!/[^A-Za-z0-9\s]/.test(v))out.push('спецсимвол'); return out }
 function pwScore(v){ var s=0; if(v.length>=8)s++; if(v.length>=12)s++; if(/[A-Z]/.test(v)&&/[a-z]/.test(v))s++; if(/[0-9]/.test(v))s++; if(/[^A-Za-z0-9\s]/.test(v))s++; return s }
 
-function svgUrl(s){return 'data:image/svg+xml;charset=utf-8,'+encodeURIComponent(s)}
-var SEED_IMG = svgUrl('<svg xmlns="http://www.w3.org/2000/svg" width="900" height="380" viewBox="0 0 900 380"><rect width="900" height="380" fill="#101a2e"/><circle cx="700" cy="90" r="46" fill="#e7c475"/><circle cx="180" cy="70" r="2" fill="#e7c475"/><circle cx="260" cy="120" r="1.6" fill="#e7c475"/><circle cx="90" cy="150" r="1.8" fill="#e7c475"/><circle cx="520" cy="60" r="1.6" fill="#e7c475"/><circle cx="610" cy="150" r="1.4" fill="#e7c475"/><path d="M0 300 Q225 258 450 300 T900 300 V380 H0 Z" fill="#16324f"/><path d="M0 322 Q225 292 450 322 T900 322 V380 H0 Z" fill="#1d4467"/><path d="M330 302 Q425 208 565 302 Z" fill="#0c1526"/><path d="M470 234 q-6 -48 -36 -68" stroke="#0c1526" stroke-width="7" fill="none"/><path d="M434 166 q36 -20 64 6 q-30 4 -38 26 q-10 -24 -26 -32z" fill="#153a33"/><path d="M434 166 q-26 4 -40 24 q26 -2 40 -24z" fill="#1d5244"/></svg>');
-function defaultBook(){return {
-  title:'Остров на краю карты', author:'Демонстрационное издание',
-  chapters:[
-   {id:uid(),title:'Карта старого Молчанова',html:'<p>Старый картограф Евстигней Молчанов исчез в начале сентября, оставив на столе недопитую чашку чая и карту, которой не было ни в одном атласе. На ней значился остров — крошечный, с ноготь мизинца, — подписанный выцветшими чернилами: «О. Н., где кончаются карты».</p><figure><img src="'+SEED_IMG+'" alt="Остров под северным небом"><figcaption>Единственный сохранившийся набросок острова. Архив Молчанова, лист 12.</figcaption></figure><p>Соседи говорили, будто по ночам он разговаривал с компасом, а стрелка его всегда указывала не на север, а куда-то в сторону моря. Я решил проверить это сам — и вот уже третью неделю веду записи, которые вы сейчас читаете.</p><blockquote>«Карта — это признание моряка в том, чего он не смог забыть». — из записной книжки Е. Молчанова</blockquote>'},
-   {id:uid(),title:'Подготовка к отплытию',html:'<p>До ближайшего порта — два дня пути, и за это время нужно собрать всё необходимое. Список я составил по пометкам на полях самой карты.</p><h2>Снаряжение</h2><ul><li>Компас с независимой стрелкой — обычный на острове сходит с ума.</li><li>Запас пресной воды на десять дней.</li><li>Сургуч и бумага: письма с острова, по легенде, доходят только запечатанными.</li><li>Фонарь с красным стеклом — «чтобы не разбудить маяк».</li></ul><h3>Маршрут</h3><p>Пароход «Седая чайка» ходит по четвергам. Капитан, узнав, куда я собираюсь, долго молчал, а потом молча нарисовал на салфетке крест и вернул её мне.</p><p>Это хороший знак. Плохой знак — когда салфетку рвут.</p>'},
-   {id:uid(),title:'Где кончаются карты',html:'<p>Остров оказался меньше, чем на карте, и больше, чем в мечтах. Песок здесь тёмный, как типографская краска, а ветер листает прибрежные валуны, будто страницы.</p><p>На вершине холма стоял столб с полустёртой надписью. Я разобрал только последние слова: <i>«…дальше рисуй сам»</i>.</p><hr><p>Так закончилась эта рукопись — и, пожалуй, именно так должны заканчиваться все книги: местом, где читатель берёт перо.</p>'}
-  ]
-}}
+/* Демонстрационного текста в читалке быть не должно: пустое издание честно
+   сообщает, что глав нет, вместо чужого тестового отрывка. */
+function emptyBook(){return {title:'',author:'',chapters:[]}}
 
 var books = {ru:null, en:null}, mark=null, set=lsGet(LS_SET)||{fs:19};
 var mode='read', currentId=null, savedRange=null;
@@ -555,37 +582,71 @@ function findCh(id){ var b=activeBook(); if(!b)return null; for(var i=0;i<b.chap
 function indexOf(id){ var b=activeBook(); if(!b)return -1; for(var i=0;i<b.chapters.length;i++) if(b.chapters[i].id===id) return i; return -1 }
 
 /* загрузка книги языка читателя (при открытии сайта) */
-function fetchBookFile(file){
-  return new Promise(function(resolve,reject){
-    if(!window.fetch||location.protocol==='file:'){reject(new Error('no'));return}
-    fetch(file,{cache:'no-store'}).then(function(r){ if(!r.ok)throw new Error('HTTP '+r.status); return r.json(); })
-    .then(function(data){ var b=data.book||data; if(!b||!Array.isArray(b.chapters))throw new Error('bad'); resolve({book:b,version:Number(data.version)||0}); },reject);
+function loadInlineBook(){
+  return new Promise(function(res){
+    if(window.__PEREPLET_BOOKS){res(window.__PEREPLET_BOOKS);return}
+    var sc=document.createElement('script');
+    sc.src='book-data.js';
+    sc.onload=function(){res(window.__PEREPLET_BOOKS||null)};
+    sc.onerror=function(){res(null)};
+    document.head.appendChild(sc);
   });
 }
+function inlineBook(file){
+  return loadInlineBook().then(function(all){
+    var d=all&&(file===BOOK_EN?all.en:all.ru);
+    if(!d)return null;
+    var b=d.book||d;
+    if(!b||!Array.isArray(b.chapters))return null;
+    return {book:b,version:Number(d.version)||0};
+  });
+}
+function fetchBookFile(file){
+  return new Promise(function(resolve,reject){
+    if(!window.fetch||location.protocol==='file:'){
+      inlineBook(file).then(function(v){ v?resolve(v):reject(new Error('no')) });
+      return;
+    }
+    fetch(file,{cache:'no-store'}).then(function(r){ if(!r.ok)throw new Error('HTTP '+r.status); return r.json(); })
+    .then(function(data){ var b=data.book||data; if(!b||!Array.isArray(b.chapters))throw new Error('bad'); resolve({book:b,version:Number(data.version)||0}); })
+    .catch(function(err){ inlineBook(file).then(function(v){ v?resolve(v):reject(err) }); });
+  });
+}
+
 function loadBook(cb){
-  var done=false;
-  function finish(){
-    if(done)return; done=true;
-    if(!books[lang]){ books[lang]=lsGet(bookKey()); if(!books[lang]&&lang==='ru'){books[lang]=defaultBook();lsSet(bookKey(),books[lang]);} }
+  var shown=false;
+  function apply(hasSource){
     mark=lsGet(markKey());
     if(books[lang]&&(!currentId||!findCh(currentId))) currentId=(books[lang].chapters[0]||{}).id||null;
-    if(cb)cb(!!books[lang]);
+    if(cb)cb(hasSource);
   }
-  setTimeout(finish,4000);
+  function show(){
+    if(shown)return; shown=true;
+    if(!books[lang]) books[lang]=lsGet(bookKey());
+    if(!books[lang]) books[lang]=emptyBook();
+    apply(false);
+  }
+  /* Кэш есть — показываем сразу, свежий файл подхватится следом. Кэша нет —
+     ждём сервер, но не дольше десяти секунд. */
+  setTimeout(function(){ if(lsGet(bookKey()))show() },2500);
+  setTimeout(show,10000);
   fetchBookFile(lang==='en'?BOOK_EN:BOOK_RU).then(function(pub){
     var cached=lsGet(bookKey()),meta=getMeta();
-    /* Локальная версия — источник истины для автора: опубликованный файл никогда
-       не должен затирать уже написанный текст. Файл подхватывается только когда
-       локальной копии вообще нет (первый заход / чистый браузер). */
-    if(!cached){
+    /* Опубликованный файл — источник истины, пока в этом браузере нет
+       несохранённых правок автора. Иначе новая версия с хостинга не доходила
+       бы ни до читателей, ни до автора на другом устройстве. */
+    var fresh=!cached||(!meta.dirty&&pub.version>meta.pubV);
+    if(fresh){
       books[lang]=pub.book;meta.pubV=pub.version;meta.dirty=false;delete meta.newerAvailable;
       lsSet(bookKey(),books[lang]);setMeta(meta);
     } else {
       books[lang]=cached;
       if(pub.version>meta.pubV){meta.newerAvailable=pub.version;setMeta(meta);}
     }
-    finish();
-  },function(){finish();});
+    if(!shown||fresh){ shown=true; apply(true); }
+  },function(){
+    show();
+  });
 }
 
 function updateLangUI(){ var r=$('#btnReadRu'),e=$('#btnReadEn'); if(r)r.classList.toggle('on',lang==='ru'); if(e)e.classList.toggle('on',lang==='en'); }
@@ -658,7 +719,7 @@ function openChapter(id,scrollY,instant){
   $('#btnPrev').textContent=t('prev');
   $('#btnNext').style.visibility='visible';
   $('#btnNext').textContent=i<n-1?t('next'):t('end');
-  $('#tocList .toc-row').forEach(function(r,k){r.classList.toggle('act',k===i)});
+  $$('#tocList .toc-row').forEach(function(r,k){r.classList.toggle('act',k===i)});
   if(!instant||(scrollY||0)<=0){window.scrollTo(0,0)} else {setTimeout(function(){window.scrollTo(0,scrollY)},30)}
 }
 $('#btnPrev').addEventListener('click',function(){var i=indexOf(currentId); var rb=readerBook(); if(i>0){openChapter(rb.chapters[i-1].id,0); if(ribbon.checked)saveMark(0)}});
@@ -811,11 +872,11 @@ function loadEdBook(l){
   edLang=l;
   var b=lsGet('pereplet.book.'+l);
   if(!b){
-    if(l==='ru'){ b=defaultBook() }
+    if(l==='ru'){ b=emptyBook() }
     else { b=mirrorEn(null) }
     lsSet('pereplet.book.'+l,b);
   } else if(l==='en'){ b=mirrorEn(b); lsSet('pereplet.book.en',b); }
-  books[l]=b; markDirty(l);
+  books[l]=b;
   if(books[l]&&(!currentId||!findCh(currentId)))currentId=(books[l].chapters[0]||{}).id||null;
 }
 function applyEditorLangUI(){
@@ -841,6 +902,7 @@ $('#btnEdEn').addEventListener('click',function(){switchEdLang('en')});
 function enterEditor(){
   edLang='ru';
   loadEdBook('ru');
+  if(!curBook().chapters.length){ curBook().chapters.push({id:uid(),title:'',html:''}); persistBook(); }
   applyEditorLangUI();
   buildChapList();
   if(!findCh(currentId)) currentId=(curBook().chapters[0]||{}).id||null;
@@ -895,7 +957,7 @@ function collectEdit(){
 }
 var saveTimer=null;
 function scheduleSave(){ setStatus('saving'); clearTimeout(saveTimer); saveTimer=setTimeout(function(){ collectEdit(); if(persistBook()){setStatus('saved');buildChapList();keepRowActive();} },600); }
-function keepRowActive(){ var cb=curBook(); $('#chapList .chap-row').forEach(function(r,k){r.classList.toggle('act',cb.chapters[k].id===currentId)}) }
+function keepRowActive(){ var cb=curBook(); $$('#chapList .chap-row').forEach(function(r,k){r.classList.toggle('act',cb.chapters[k].id===currentId)}) }
 function setStatus(s){ var el=$('#saveStatus'); el.className='status'+(s==='saving'?' saving':s==='error'?' error':''); $('#saveTxt').textContent=s==='saving'?'Набирается…':s==='error'?'Ошибка сохранения':'Сохранено ✓'; }
 function updateWordCount(){ $('#wordCount').textContent=(edLang==='en'?'EN · слов: ':'В главе слов: ')+words(edBody.innerHTML)+' · Знаков: '+(edBody.textContent||'').replace(/\s/g,'').length }
 edTitle.addEventListener('input',scheduleSave);
@@ -1239,7 +1301,7 @@ document.addEventListener('keydown',function(e){ if((e.ctrlKey||e.metaKey)&&e.ke
 /* старт: сначала поднимаем книжные ключи из IndexedDB, иначе lsGet(bookKey())
    вернёт пустоту и показат демо-версию вместо сохранённой книги */
 initCred(); migrateKeys(); applyFs();
-prepareStore().then(function(){ applyLang(lang) });
+prepareStore().then(dropDemoCache).then(function(){ applyLang(lang) });
 })();
 </script>
 </body>

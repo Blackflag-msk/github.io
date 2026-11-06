@@ -211,6 +211,13 @@ function main() {
   store.all().forEach(function (v, file) { fs.writeFileSync(path.join(imgDir, file), v.buf); });
   built.forEach(function (b) { fs.writeFileSync(path.join(opt.out, b.name), b.json); });
 
+  /* Та же книга, но подключённая скриптом: при открытии index.html двойным
+     кликом браузер не отдаёт fetch() к локальным JSON. */
+  const inline = {};
+  built.forEach(function (b) { inline[b.name === 'book.en.json' ? 'en' : 'ru'] = JSON.parse(b.json); });
+  fs.writeFileSync(path.join(opt.out, 'book-data.js'),
+    'window.__PEREPLET_BOOKS=' + JSON.stringify(inline) + ';\n');
+
   /* Сборка полного сайта: вместе с dist/ кладём читалку и служебные файлы. */
   if (path.resolve(opt.out) !== path.resolve(ROOT)) {
     fs.copyFileSync(path.join(ROOT, 'index.html'), path.join(opt.out, 'index.html'));
