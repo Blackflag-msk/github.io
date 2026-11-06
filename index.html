@@ -4,6 +4,24 @@
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>Переплёт — издание и чтение книги</title>
+<script>
+/* Кабинет автора — принадлежность «толстого клиента», то есть локальной копии
+   каталога (файл на диске или свой сервер). По ссылке из сети читатель видит
+   только чтение: ни кнопки «Редактировать», ни запроса PIN. */
+(function(){
+  var local=false;
+  try{
+    var h=(location.hostname||'').toLowerCase();
+    local=location.protocol==='file:'||h==='localhost'||h==='127.0.0.1'||h==='::1'||h==='[::1]';
+    /* Сборка для хостинга помечается meta pereplet-build=reader: даже открытая
+       с диска, она остаётся читальней. */
+    var m=document.querySelector('meta[name="pereplet-build"]');
+    if(m&&m.getAttribute('content')==='reader')local=false;
+  }catch(e){}
+  window.__PEREPLET_LOCAL=local;
+  if(!local)document.documentElement.className+=' remote';
+})();
+</script>
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
 <link href="https://fonts.googleapis.com/css2?family=Playfair+Display:ital,wght@0,500;0,700;0,900;1,500&family=PT+Serif:ital,wght@0,400;0,700;1,400&family=Manrope:wght@400;500;700;800&display=swap" rel="stylesheet">
@@ -95,6 +113,8 @@ input,select{font-family:var(--ui)}
 .bar .grow{flex:1}
 .bbtn{padding:8px 13px;border-radius:3px;font-size:13.5px;font-weight:600;color:#e9e2d0;border:1px solid transparent;transition:all .18s}
 .bbtn:hover{border-color:rgba(201,162,75,.5);color:var(--gold2)}
+/* Опубликованное издание: кабинет автора недоступен, интерфейс — только чтение. */
+html.remote #btnEdit{display:none!important}
 .fontctl{display:flex;align-items:center;gap:6px;border:1px solid rgba(233,226,208,.18);border-radius:3px;padding:3px 6px}
 .fontctl button{width:30px;height:28px;border-radius:2px;font-family:var(--body);font-size:14px;color:#e9e2d0}
 .fontctl button:hover{background:var(--ink3);color:var(--gold2)}
@@ -382,6 +402,9 @@ input,select{font-family:var(--ui)}
 var BOOK_RU='book.json';
 var BOOK_EN='book.en.json';
 var DEFAULT_PIN='1234';
+/* Кабинет автора доступен только в «толстом клиенте»: локальный файл или
+   собственный сервер на этой машине. Опубликованное издание — только чтение. */
+var LOCAL=window.__PEREPLET_LOCAL===true;
 
 var LS_SET='pereplet.settings', LS_LANG='pereplet.lang', LS_CRED='pereplet.cred';
 function $(s,c){return (c||document).querySelector(s)}
@@ -560,7 +583,11 @@ function hashStr(str,salt){
   h2=Math.imul(h2^(h2>>>16),2246822507)>>>0; h2=Math.imul(h2^(h2>>>13),3266489909)>>>0;
   return h1.toString(36)+'.'+h2.toString(36);
 }
-function initCred(){ cred=lsGet(LS_CRED); if(!cred){var salt=makeSalt(); cred={salt:salt,pin:hashStr(DEFAULT_PIN,salt),pw:null}; lsSet(LS_CRED,cred);} }
+function initCred(){
+  /* В опубликованном издании учётных данных не заводим: вход в кабинет там не нужен. */
+  if(!LOCAL){ cred=null; return }
+  cred=lsGet(LS_CRED); if(!cred){var salt=makeSalt(); cred={salt:salt,pin:hashStr(DEFAULT_PIN,salt),pw:null}; lsSet(LS_CRED,cred);}
+}
 function pwIssues(v){ var out=[]; if(v.length<8)out.push('длина'); if(!/[A-Z]/.test(v))out.push('заглавная латинская'); if(!/[a-z]/.test(v))out.push('строчная латинская'); if(!/[0-9]/.test(v))out.push('цифра'); if(!/[^A-Za-z0-9\s]/.test(v))out.push('спецсимвол'); return out }
 function pwScore(v){ var s=0; if(v.length>=8)s++; if(v.length>=12)s++; if(/[A-Z]/.test(v)&&/[a-z]/.test(v))s++; if(/[0-9]/.test(v))s++; if(/[^A-Za-z0-9\s]/.test(v))s++; return s }
 
@@ -665,6 +692,7 @@ function applyLang(nl,after){
 }
 
 function setScreen(name){
+  if(name==='edit'&&!LOCAL)name='read';
   mode=name; document.body.setAttribute('data-screen',name);
   $$('.screen').forEach(function(s){s.classList.remove('on')});
   $('#screen-'+name).classList.add('on');
@@ -676,17 +704,21 @@ function setScreen(name){
 
 /* ---------- читальня ---------- */
 var ribbon=$('#ribbon'), readBody=$('#readBody');
+/* В опубликованном издании совета «нажмите Редактировать» быть не должно. */
+function emptyText(){
+  return LOCAL?t('empty'):(lang==='en'?'This book has no chapters yet.':'В книге пока нет ни одной главы.');
+}
 function applyReaderLabels(){
   $('#btnToc').innerHTML='☰ '+t('toc');
   $('#tocHead').textContent=t('toc');
   $('#mkTxt').textContent=t('bookmark');
-  $('#btnEdit').innerHTML=t('edit');
+  if(LOCAL)$('#btnEdit').innerHTML=t('edit');
   updateLangUI();
 }
 function enterReader(){
   applyReaderLabels();
   var rb=readerBook();
-  if(!rb){ $('#readPaper').innerHTML='<div class="prose"><p>'+t('empty')+'</p></div>'; $('#readBookTitle').textContent=''; return }
+  if(!rb){ $('#readPaper').innerHTML='<div class="prose"><p>'+emptyText()+'</p></div>'; $('#readBookTitle').textContent=''; return }
   buildTOC();
   var target=(mark&&findCh(mark.ch))?mark.ch:(findCh(currentId)?currentId:(rb.chapters[0]||{}).id);
   var y=(mark&&mark.ch===target)?mark.y:0;
@@ -707,7 +739,7 @@ function buildTOC(){
 }
 function openChapter(id,scrollY,instant){
   var rb=readerBook(), ch=findCh(id);
-  if(!ch){ $('#readPaper').innerHTML='<div class="kicker">'+t('chapter')+'</div><div class="prose"><p>'+t('empty')+'</p></div>'; return }
+  if(!ch){ $('#readPaper').innerHTML='<div class="kicker">'+t('chapter')+'</div><div class="prose"><p>'+emptyText()+'</p></div>'; return }
   currentId=id; var i=indexOf(id), n=rb.chapters.length;
   var paper=$('#readPaper'); paper.classList.remove('in'); void paper.offsetWidth; paper.classList.add('in');
   $('#readKicker').textContent=t('chapter')+' '+(i+1)+' '+t('of')+' '+n;
@@ -751,10 +783,12 @@ function askLogin(onOk){
   setTimeout(function(){pinI.focus()},60);
 }
 function enterEditorFlow(){
+  if(!LOCAL){ setScreen('read'); return }
   if(sessionStorage.getItem('pereplet.auth')==='1'){setScreen('edit');return}
   askLogin(function(){setScreen('edit')});
 }
 $('#btnEdit').addEventListener('click',function(){
+  if(!LOCAL)return;
   if(ribbon.checked)saveMark();
   if(lang!=='ru'){ applyLang('ru',enterEditorFlow); } else enterEditorFlow();
 });

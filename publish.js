@@ -14,6 +14,10 @@
   src/book.en.json   — то же для английской версии (необязателен)
   book.json, images/ — лёгкая публикаемая копия
 
+  index.html в корне — локальный «толстый клиент» автора: чтение + кабинет с PIN.
+  dist/index.html — читальня: метка pereplet-build=reader скрывает кабинет,
+  даже если собранный сайт открыть локально.
+
   node publish.js              пишет книгу в корень каталога
   node publish.js --dist       собирает готовый сайт в dist/ (для GitHub Pages)
   node publish.js --dist out   собирает в out/
@@ -151,6 +155,18 @@ function reuseVersion(dirs, name, hash) {
   return null;
 }
 
+/* В опубликованном издании редактора быть не должно: сборка помечается как
+   читальня, и открытие этого index.html где угодно — даже с диска — не покажет
+   ни кнопки «Редактировать», ни запроса PIN. Локальный файл в корне проекта
+   такой метки не имеет и остаётся полноценным клиентом автора. */
+function readerHtml() {
+  const src = fs.readFileSync(path.join(ROOT, 'index.html'), 'utf8');
+  const tag = '<meta name="pereplet-build" content="reader">';
+  if (src.indexOf('<meta name="pereplet-build"') !== -1) fail('index.html уже содержит метку pereplet-build');
+  if (src.indexOf('<title>') === -1) fail('В index.html нет <title> — не к чему добавить метку читальни');
+  return src.replace('<title>', tag + '\n<title>');
+}
+
 function main() {
   const opt = parseArgs(process.argv.slice(2));
 
@@ -220,7 +236,7 @@ function main() {
 
   /* Сборка полного сайта: вместе с dist/ кладём читалку и служебные файлы. */
   if (path.resolve(opt.out) !== path.resolve(ROOT)) {
-    fs.copyFileSync(path.join(ROOT, 'index.html'), path.join(opt.out, 'index.html'));
+    fs.writeFileSync(path.join(opt.out, 'index.html'), readerHtml());
     ['.nojekyll', 'README.md'].forEach(function (f) {
       if (fs.existsSync(path.join(ROOT, f))) fs.copyFileSync(path.join(ROOT, f), path.join(opt.out, f));
     });

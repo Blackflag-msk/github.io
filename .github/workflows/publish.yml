@@ -41,6 +41,8 @@ jobs:
           test -f dist/book.en.json
           test -f dist/book-data.js
           test -f dist/.nojekyll
+          # На Pages не должно быть кабинета автора: сборка обязана быть читальней.
+          grep -q '<meta name="pereplet-build" content="reader">' dist/index.html
           node -e "
             const fs=require('fs');
             for(const f of ['book.json','book.en.json']){
