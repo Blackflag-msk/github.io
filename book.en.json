@@ -1,0 +1,17 @@
+{
+ "app": "pereplet",
+ "version": 1793973359286,
+ "updated": "2026-11-06T14:01:11.602Z",
+ "book": {
+  "title": "Остров на краю кота",
+  "author": "МурМур",
+  "chapters": [
+   {
+    "id": "chmw4t488usn6kh",
+    "title": "Death Rides",
+    "html": "In the beginning was a first chapter<div><img src=\"images/img-d887ef82ef687a6f.jpg\" alt=\"\"></div>",
+    "ts": "classic"
+   }
+  ]
+ }
+}

@@ -1,0 +1,68 @@
+name: Publish book
+
+# Реагирует только на изменения исходников из редактора, поэтому цикл
+# «workflow коммитит собранное» исключён: артефакт dist/ в git не возвращается.
+on:
+  push:
+    branches: [main]
+    paths:
+      - 'src/**'
+      - 'index.html'
+      - 'publish.js'
+      - '.github/workflows/publish.yml'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  pages: write
+  id-token: write
+
+concurrency:
+  group: pages
+  cancel-in-progress: true
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+
+      - name: Сборка книги (data:URL → файлы)
+        run: node publish.js --dist
+
+      - name: Проверка собранного
+        run: |
+          test -f dist/index.html
+          test -f dist/book.json
+          test -f dist/.nojekyll
+          node -e "
+            const fs=require('fs');
+            const d=JSON.parse(fs.readFileSync('dist/book.json','utf8'));
+            if(!d.book||!Array.isArray(d.book.chapters))throw new Error('book.json испорчен');
+            const raw=fs.readFileSync('dist/book.json','utf8');
+            if(/data:image/.test(raw))throw new Error('в dist/book.json остались data:URL');
+            let miss=0;
+            (raw.match(/images\/[\w.\-]+/g)||[]).forEach(s=>{ if(!fs.existsSync('dist/'+s)){console.error('нет файла '+s);miss++;} });
+            if(miss)throw new Error('ссылок без файла: '+miss);
+            console.log('OK: глав '+d.book.chapters.length+', версия '+d.version);
+          "
+
+      - uses: actions/configure-pages@v5
+
+      - uses: actions/upload-pages-artifact@v3
+        with:
+          path: dist
+
+  deploy:
+    needs: build
+    runs-on: ubuntu-latest
+    environment:
+      name: github-pages
+      url: ${{ steps.out.outputs.page_url }}
+    steps:
+      - id: out
+        uses: actions/deploy-pages@v4
