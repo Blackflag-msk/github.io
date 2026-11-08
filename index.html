@@ -114,7 +114,20 @@ input,select{font-family:var(--ui)}
 .bbtn{padding:8px 13px;border-radius:3px;font-size:13.5px;font-weight:600;color:#e9e2d0;border:1px solid transparent;transition:all .18s}
 .bbtn:hover{border-color:rgba(201,162,75,.5);color:var(--gold2)}
 /* Опубликованное издание: кабинет автора недоступен, интерфейс — только чтение. */
-html.remote #btnEdit{display:none!important}
+html.remote #btnEdit,html.remote #btnPublish{display:none!important}
+#btnPublish{position:relative;color:var(--gold2);border-color:rgba(201,162,75,.45)}
+#btnPublish:disabled{opacity:.55;cursor:default}
+#btnPublish::after{content:"";position:absolute;top:3px;right:3px;width:7px;height:7px;border-radius:50%;
+  background:var(--red);box-shadow:0 0 0 2px rgba(16,26,46,.92);display:none}
+#btnPublish.needs-pub::after{display:block}
+.pub-log{max-height:190px;overflow:auto;background:#fffdf6;border:1px solid var(--line);border-radius:4px;
+  padding:10px 12px;font-family:var(--ui);font-size:12.5px;line-height:1.65;color:#5a4d33;margin-bottom:12px}
+.pub-log div+div{margin-top:3px}
+.pub-log .ok{color:#3a7d44}
+.pub-log .bad{color:var(--red2)}
+.pub-log a{color:var(--red2);text-decoration:underline}
+.pub-sum{font-family:var(--ui);font-size:13px;line-height:1.6;color:#5a4d33}
+#pubGo[disabled]{opacity:.55;cursor:default}
 .fontctl{display:flex;align-items:center;gap:6px;border:1px solid rgba(233,226,208,.18);border-radius:3px;padding:3px 6px}
 .fontctl button{width:30px;height:28px;border-radius:2px;font-family:var(--body);font-size:14px;color:#e9e2d0}
 .fontctl button:hover{background:var(--ink3);color:var(--gold2)}
@@ -327,6 +340,7 @@ html.remote #btnEdit{display:none!important}
       <button id="btnEdRu">RU</button><button id="btnEdEn">EN</button>
     </div>
     <button class="bbtn" id="btnSecurity" title="Сменить PIN и пароль входа">🔒 Безопасность</button>
+    <button class="bbtn" id="btnPublish" title="Выложить правки на GitHub Pages">⇧ Опубликовать</button>
     <button class="bbtn" id="btnExport" title="Скачать book.json и (если заполнена) book.en.json">⤓ Копия книги</button>
     <button class="bbtn" id="btnRestore" title="Загрузить черновик/копию книги">⤒ Восстановить</button>
   </header>
@@ -554,8 +568,8 @@ function metaKey(){return 'pereplet.meta.'+lang}
 function markKey(){return 'pereplet.mark.'+lang}
 function getMeta(){return lsGet(metaKey())||{pubV:0,dirty:false}}
 function setMeta(m){lsSet(metaKey(),m)}
-function markDirty(l){var m=lsGet('pereplet.meta.'+l)||{pubV:0,dirty:false};m.dirty=true;lsSet('pereplet.meta.'+l,m)}
-function unmarkDirty(l,v){var m=lsGet('pereplet.meta.'+l)||{pubV:0,dirty:false};m.dirty=false;if(v!=null)m.pubV=v;delete m.newerAvailable;lsSet('pereplet.meta.'+l,m)}
+function markDirty(l){var m=lsGet('pereplet.meta.'+l)||{pubV:0,dirty:false};m.dirty=true;lsSet('pereplet.meta.'+l,m);try{pubDot()}catch(e){}}
+function unmarkDirty(l,v){var m=lsGet('pereplet.meta.'+l)||{pubV:0,dirty:false};m.dirty=false;if(v!=null)m.pubV=v;delete m.newerAvailable;lsSet('pereplet.meta.'+l,m);try{pubDot()}catch(e){}}
 
 var I18N={
  ru:{toc:'Содержание',bookmark:'Закладка',chapter:'Глава',of:'из',prev:'← Предыдущая глава',next:'Следующая глава →',end:'Конец книги ✦',wordsShort:'сл.',minread:'мин чтения',edit:'✎ Редактировать',empty:'В книге пока нет ни одной главы. Нажмите «✎ Редактировать» и добавьте первую.',emptyChapter:'Глава пока пустая.'},
@@ -849,6 +863,126 @@ function openSecurity(){
 }
 $('#btnSecurity').addEventListener('click',openSecurity);
 
+/* ---------- публикация на GitHub Pages ----------
+   Браузер не получает доступа к GitHub: он передаёт копию книги локальному
+   серверу (serve.js), а тот пересобирает издание и отправляет коммит своим
+   обычным git-помощником. Страница на Pages перезаписывается workflow. */
+var PUB_API='api/publish-status', PUB_RUN='api/publish';
+var PUB_SITE='https://blackflag-msk.github.io/github.io/';
+var PUB_REPO='https://github.com/Blackflag-msk/github.io/';
+var pubSrv=null;
+
+function pubProbe(){
+  if(location.protocol==='file:')return Promise.resolve({enabled:false,reason:'страница открыта с диска'});
+  return fetch(PUB_API,{cache:'no-store'}).then(function(r){
+    if(!r.ok)throw new Error('http '+r.status);
+    return r.json();
+  }).catch(function(){ return {enabled:false,reason:'локальный сервер не отвечает'} });
+}
+
+function pubDot(){
+  var b=$('#btnPublish'); if(!b)return;
+  var dirty=!!(lsGet('pereplet.meta.ru')||{}).dirty||!!(lsGet('pereplet.meta.en')||{}).dirty;
+  b.classList.toggle('needs-pub',!!(dirty&&LOCAL));
+}
+
+function pubStep(cls,msg){
+  var el=$('#pubLog'); if(!el)return;
+  var d=document.createElement('div'); if(cls)d.className=cls; d.textContent=msg;
+  el.appendChild(d); el.scrollTop=el.scrollHeight;
+}
+
+function askNoServer(reason){
+  openModal('<h3>Нужен локальный сервер</h3>'+
+    '<p>Публикация идёт через <b>serve.js</b>: он пересобирает издание и отправляет коммит в git, поэтому токен GitHub в браузере не нужен.</p>'+
+    '<div class="sec-warn">Причина: '+esc(reason||'неизвестно')+'</div>'+
+    '<p>Остановите предпросмотр (Ctrl+C) и запустите в корне каталога:</p>'+
+    '<p><input class="txt" id="pubCmd" value="node serve.js" readonly onfocus="this.select()"></p>'+
+    '<p>После этого откройте <b>http://localhost:8080/</b> и нажмите «⇧ Опубликовать» снова.</p>'+
+    '<div class="m-actions"><button class="btn ink small" id="mNo">Понятно</button></div>');
+  $('#mNo').addEventListener('click',closeModal);
+}
+
+function publishPayload(){
+  var ru=getBookObj('ru');
+  if(!ru||!ru.chapters.length)throw new Error('В русской версии нет ни одной главы — публиковать нечего.');
+  var out={ ru:{app:'pereplet',version:Date.now(),updated:new Date().toISOString(),book:ru} };
+  var en=buildEnBookForPublish();
+  if(en)out.en={app:'pereplet',version:Date.now()+1,updated:new Date().toISOString(),book:en};
+  return out;
+}
+
+function runPublish(){
+  var go=$('#pubGo'); if(go)go.disabled=true;
+  var payload;
+  try{ payload=publishPayload(); }catch(e){ pubStep('bad','✕ '+e.message); if(go)go.disabled=false; return; }
+  pubStep('','Отправляю копию книги локальному серверу…');
+  fetch(PUB_RUN,{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(payload),cache:'no-store'})
+    .then(function(r){ return r.text().then(function(txt){
+      var data=null; try{ data=JSON.parse(txt); }catch(e){}
+      if(!r.ok||!data)throw new Error((data&&data.error)||('сервер ответил '+r.status));
+      return data;
+    }); })
+    .then(function(out){
+      (out.log||[]).forEach(function(s){ pubStep(s.ok?'ok':'bad',(s.ok?'✓ ':'✕ ')+s.msg) });
+      if(out.versions){
+        if(out.versions.ru)unmarkDirty('ru',out.versions.ru);
+        if(out.versions.en)unmarkDirty('en',out.versions.en);
+      }
+      if(out.committed){
+        pubStep('ok','Коммит '+(out.sha||'')+' отправлен. Публикатор GitHub соберёт Pages за 1–3 минуты.');
+        pubStep('','Сборка: '+PUB_REPO+'actions   ·   книга: '+PUB_SITE);
+        toast('Опубликовано: изменения отправлены на GitHub.');
+      } else {
+        pubStep('ok','Новых изменений нет — на Pages уже актуальная версия.');
+        toast('Новых изменений не найдено.');
+      }
+      pubDot();
+      var close=$('#pubClose'); if(close)close.textContent='Готово';
+    })
+    .catch(function(err){
+      pubStep('bad','✕ '+(err&&err.message||err));
+      pubStep('','Можно закрыть окно и повторить попытку.');
+      toast('Публикация не удалась.','err');
+      if(go)go.disabled=false;
+    });
+}
+
+function openPublish(){
+  collectEdit(); persistBook();
+  pubSrv=pubSrv||{enabled:false};
+  var dirtyRu=(lsGet('pereplet.meta.ru')||{}).dirty, dirtyEn=(lsGet('pereplet.meta.en')||{}).dirty;
+  var ru=getBookObj('ru'), en=buildEnBookForPublish();
+  var sum='<div class="pub-sum">Русская версия: <b>'+((ru&&ru.chapters)||[]).length+' глав</b>'+(dirtyRu?', есть неопубликованные правки':', правок нет')+'.<br>'+
+    'Английская версия: '+(en?'<b>'+en.chapters.length+' глав</b>'+(dirtyEn?', есть неопубликованные правки':', правок нет'):'заполняется — в публикацию не пойдёт')+'.</div>';
+  openModal('<h3>Публикация на GitHub Pages</h3>'+sum+
+    '<p>Кнопка перезапишет текущую версию книги на <b>'+PUB_SITE+'</b> одним коммитом: правки текста и структуры глав попадут в <b>src/book.json</b> и <b>src/book.en.json</b>, картинки — в <b>images/</b>. Публичная страница обновится автоматически.</p>'+
+    '<div class="pub-log" id="pubLog"></div>'+
+    '<div class="m-actions"><button class="btn ink small" id="pubClose">Отмена</button>'+
+    '<button class="btn red small" id="pubGo">⇧ Опубликовать сейчас</button></div>');
+  $('#pubClose').addEventListener('click',closeModal);
+  $('#pubGo').addEventListener('click',runPublish);
+  $('#pubGo').disabled=true;
+  pubStep('','Проверяю локальный сервер…');
+  pubProbe().then(function(st){
+    pubSrv=st||{enabled:false};
+    if(!pubSrv.enabled){
+      pubStep('bad','Сервер не готов: '+(pubSrv.reason||'неизвестно'));
+      pubStep('','Как включить — в следующем окне.');
+      $('#pubGo').disabled=true;
+      $('#pubClose').textContent='Закрыть';
+      setTimeout(function(){ closeModal(); askNoServer(pubSrv.reason); },900);
+      return;
+    }
+    $('#pubGo').disabled=false;
+    pubStep('ok','Сервер готов, публикуем в ветку main');
+  });
+}
+
+$('#btnPublish').addEventListener('click',function(){ if(LOCAL)openPublish(); });
+
+
+
 $('#btnToc').addEventListener('click',function(){document.body.classList.toggle('toc-open')});
 $('#tocClose').addEventListener('click',function(){document.body.classList.remove('toc-open')});
 
@@ -941,6 +1075,7 @@ function enterEditor(){
   buildChapList();
   if(!findCh(currentId)) currentId=(curBook().chapters[0]||{}).id||null;
   openChapterEdit(currentId);
+  pubProbe().then(function(st){ pubSrv=st; pubDot(); });
 }
 function buildChapList(){
   var cb=curBook(), list=$('#chapList'); list.innerHTML='';
