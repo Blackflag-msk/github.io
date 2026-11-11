@@ -250,10 +250,24 @@ http.createServer(function (req, res) {
     });
     res.end(data);
   });
+}).on('error', function (err) {
+  /* Двойной запуск из publish.bat — самое частое. Окно закрываем молча,
+     второй сервер не нужен: первый уже всё делает. */
+  if (err.code === 'EADDRINUSE') {
+    console.log('Сервер уже работает на http://localhost:' + port + ' — второй не нужен.');
+    console.log('Если это окно запустилось случайно, просто закройте его.');
+    setTimeout(function () { process.exit(0); }, 4000);
+    return;
+  }
+  console.error('✖ сервер не поднялся: ' + (err.message || err));
+  process.exit(1);
 }).listen(port, function () {
-  console.log('Кника отдаётся из ' + dir);
+  console.log('Книга отдаётся из ' + dir);
   console.log('Откройте  http://localhost:' + port + '/   (Ctrl+C — остановить)');
   console.log(CAN_PUBLISH
     ? 'Публикация: кнопка «⇧ Опубликовать» в кабинете автора'
     : 'Публикация недоступна' + (publishOn ? ' (открыт собранный dist/)' : ' (--no-publish)'));
+  console.log('');
+  console.log('Это окно — сервер издания. Держите его открытым, пока публикуете');
+  console.log('книгу. Закрывать его не нужно: он работает в фоне и не мешает.');
 });
