@@ -127,6 +127,11 @@ html.remote #btnEdit,html.remote #btnPublish{display:none!important}
 .pub-log .bad{color:var(--red2)}
 .pub-log a{color:var(--red2);text-decoration:underline}
 .pub-sum{font-family:var(--ui);font-size:13px;line-height:1.6;color:#5a4d33}
+.pub-help{font-family:var(--ui);font-size:13px;line-height:1.6;color:#5a4d33}
+.pub-help ol{margin:6px 0 6px 20px;padding:0}
+.pub-help li{margin-bottom:4px}
+.pub-help .bad{color:var(--red2)}
+.pub-help .hint{color:#7a6d53;font-style:italic;font-size:12px}
 #pubGo[disabled]{opacity:.55;cursor:default}
 .fontctl{display:flex;align-items:center;gap:6px;border:1px solid rgba(233,226,208,.18);border-radius:3px;padding:3px 6px}
 .fontctl button{width:30px;height:28px;border-radius:2px;font-family:var(--body);font-size:14px;color:#e9e2d0}
@@ -864,20 +869,31 @@ function openSecurity(){
 $('#btnSecurity').addEventListener('click',openSecurity);
 
 /* ---------- публикация на GitHub Pages ----------
-   Браузер не получает доступа к GitHub: он передаёт копию книги локальному
-   серверу (serve.js), а тот пересобирает издание и отправляет коммит своим
-   обычным git-помощником. Страница на Pages перезаписывается workflow. */
+   Коммит и push делает не браузер, а локальный сервер (serve.js): так учётные
+   данные GitHub не попадают на страницу. Страницу при этом открывают двойным
+   кликом, то есть с диска (file://), — и публиковать можно оттуда же: Chrome
+   пропускает запросы с file:// на http://127.0.0.1, а сервер отвечает
+   CORS-заголовками. Черновик остаётся в том же localStorage, куда его писали,
+   поэтому адрес страницы менять не нужно — достаточно один раз запустить
+   «publish.bat» двойным кликом. */
 var PUB_API='api/publish-status', PUB_RUN='api/publish';
 var PUB_SITE='https://blackflag-msk.github.io/github.io/';
 var PUB_REPO='https://github.com/Blackflag-msk/github.io/';
-var pubSrv=null;
+var PUB_PORT=8080, pubSrv=null;
+
+/* С диска относительный путь ушёл бы в файл, а не в сервер. */
+function pubUrl(p){ return (location.protocol==='file:'?'http://127.0.0.1:'+PUB_PORT+'/':'')+p }
 
 function pubProbe(){
-  if(location.protocol==='file:')return Promise.resolve({enabled:false,reason:'страница открыта с диска'});
-  return fetch(PUB_API,{cache:'no-store'}).then(function(r){
+  return fetch(pubUrl(PUB_API),{cache:'no-store'}).then(function(r){
     if(!r.ok)throw new Error('http '+r.status);
     return r.json();
-  }).catch(function(){ return {enabled:false,reason:'локальный сервер не отвечает'} });
+  }).catch(function(e){
+    var blocked=String((e&&e.message)||e).toLowerCase().indexOf('failed to fetch')>=0;
+    return {enabled:false,reason:location.protocol==='file:'
+      ?'сервер не запущен'+(blocked?', либо браузер запретил страницу с диска доступ к локальной сети — согласитесь с запросом «доступ к устройствам в локальной сети»':'')
+      :'локальный сервер не отвечает'};
+  });
 }
 
 function pubDot(){
@@ -887,20 +903,43 @@ function pubDot(){
 }
 
 function pubStep(cls,msg){
-  var el=$('#pubLog'); if(!el)return;
+  var el=$('#pubLog'); if(!el)return null;
   var d=document.createElement('div'); if(cls)d.className=cls; d.textContent=msg;
-  el.appendChild(d); el.scrollTop=el.scrollHeight;
+  el.appendChild(d); el.scrollTop=el.scrollHeight; return d;
 }
 
-function askNoServer(reason){
-  openModal('<h3>Нужен локальный сервер</h3>'+
-    '<p>Публикация идёт через <b>serve.js</b>: он пересобирает издание и отправляет коммит в git, поэтому токен GitHub в браузере не нужен.</p>'+
-    '<div class="sec-warn">Причина: '+esc(reason||'неизвестно')+'</div>'+
-    '<p>Остановите предпросмотр (Ctrl+C) и запустите в корне каталога:</p>'+
-    '<p><input class="txt" id="pubCmd" value="node serve.js" readonly onfocus="this.select()"></p>'+
-    '<p>После этого откройте <b>http://localhost:8080/</b> и нажмите «⇧ Опубликовать» снова.</p>'+
-    '<div class="m-actions"><button class="btn ink small" id="mNo">Понятно</button></div>');
-  $('#mNo').addEventListener('click',closeModal);
+function pubHtml(html){
+  var el=$('#pubLog'); if(!el)return null;
+  var d=document.createElement('div'); d.innerHTML=html;
+  el.appendChild(d); el.scrollTop=el.scrollHeight; return d;
+}
+
+/* Понятная инструкция для человека, который не работает в командной строке. */
+function serverHelp(st){
+  var reason=(st&&st.reason)||'сервер не отвечает';
+  var off=!!(st&&st.enabled===false&&/отключ|не публикует|предпросмотр/.test(reason));
+  return '<div class="pub-help"><p><b>Нужен один запуск — и всё.</b></p>'+
+    '<ol><li>Откройте папку <b>Books</b> — в ней лежит эта страница.</li>'+
+    '<li>Дважды щёлкните по файлу <b>publish.bat</b>: он запустит сервер издания. Ничего набирать не придётся, окно сервера просто не закрывайте.</li>'+
+    '<li>Нажмите «⇧ Жду сервер и публикую» — сервер будет найден автоматически, и правки уйдут на GitHub.</li></ol>'+
+    (off?'<p class="bad">Запущенный сервер не публикует: '+esc(reason)+'. Закройте его окно и запустите publish.bat из корня папки Books.</p>':'')+
+    '<p class="hint">Сервер нужен затем, что коммит и отправку делает он вашим обычным git: токен и пароль GitHub на странице вводить не нужно.</p></div>';
+}
+
+/* Ждём, пока автор запустит publish.bat: опрашиваем сервер до истечения срока. */
+function pubWait(ms){
+  var t0=Date.now(), row=pubStep('','Жду запуска publish.bat…');
+  return new Promise(function(res,rej){
+    (function tick(){
+      pubProbe().then(function(st){
+        if(st&&st.enabled){ pubSrv=st; if(row)row.className='ok'; if(row)row.textContent='Сервер найден — публикуем'; res(st); return; }
+        var left=Math.ceil((ms-(Date.now()-t0))/1000);
+        if(left<=0){ rej(new Error('Сервер так и не ответил. Проверьте, что publish.bat запущен из папки Books и его окно не закрыто.')); return; }
+        if(row)row.textContent='Жду запуска publish.bat… осталось '+left+' с (окно сервера не закрывайте)';
+        setTimeout(tick,1500);
+      });
+    })();
+  });
 }
 
 function publishPayload(){
@@ -916,8 +955,11 @@ function runPublish(){
   var go=$('#pubGo'); if(go)go.disabled=true;
   var payload;
   try{ payload=publishPayload(); }catch(e){ pubStep('bad','✕ '+e.message); if(go)go.disabled=false; return; }
-  pubStep('','Отправляю копию книги локальному серверу…');
-  fetch(PUB_RUN,{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(payload),cache:'no-store'})
+  var ready=(pubSrv&&pubSrv.enabled)?Promise.resolve(pubSrv):pubWait(180000);
+  ready.then(function(){
+    pubStep('','Отправляю копию книги локальному серверу…');
+    return fetch(pubUrl(PUB_RUN),{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(payload),cache:'no-store'});
+  })
     .then(function(r){ return r.text().then(function(txt){
       var data=null; try{ data=JSON.parse(txt); }catch(e){}
       if(!r.ok||!data)throw new Error((data&&data.error)||('сервер ответил '+r.status));
@@ -950,7 +992,6 @@ function runPublish(){
 
 function openPublish(){
   collectEdit(); persistBook();
-  pubSrv=pubSrv||{enabled:false};
   var dirtyRu=(lsGet('pereplet.meta.ru')||{}).dirty, dirtyEn=(lsGet('pereplet.meta.en')||{}).dirty;
   var ru=getBookObj('ru'), en=buildEnBookForPublish();
   var sum='<div class="pub-sum">Русская версия: <b>'+((ru&&ru.chapters)||[]).length+' глав</b>'+(dirtyRu?', есть неопубликованные правки':', правок нет')+'.<br>'+
@@ -966,16 +1007,16 @@ function openPublish(){
   pubStep('','Проверяю локальный сервер…');
   pubProbe().then(function(st){
     pubSrv=st||{enabled:false};
-    if(!pubSrv.enabled){
-      pubStep('bad','Сервер не готов: '+(pubSrv.reason||'неизвестно'));
-      pubStep('','Как включить — в следующем окне.');
-      $('#pubGo').disabled=true;
-      $('#pubClose').textContent='Закрыть';
-      setTimeout(function(){ closeModal(); askNoServer(pubSrv.reason); },900);
+    var go=$('#pubGo');
+    if(pubSrv.enabled){
+      if(go)go.disabled=false;
+      pubStep('ok','Сервер готов, публикуем в ветку main');
       return;
     }
-    $('#pubGo').disabled=false;
-    pubStep('ok','Сервер готов, публикуем в ветку main');
+    pubStep('bad','Сервер не готов: '+(pubSrv.reason||'неизвестно'));
+    pubHtml(serverHelp(pubSrv));
+    /* Кнопка не гаснет: её смысл — дождаться запуска publish.bat и публиковать. */
+    if(go){ go.textContent='⇧ Жду сервер и публику'; go.disabled=false; }
   });
 }
 
