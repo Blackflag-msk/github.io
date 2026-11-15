@@ -251,6 +251,10 @@ html.remote #btnEdit,html.remote #btnPublish{display:none!important}
 .prose[contenteditable] img:hover{box-shadow:0 0 0 3px rgba(201,162,75,.6), 0 8px 22px rgba(40,30,10,.2)}
 .prose[contenteditable] img.sel{box-shadow:0 0 0 3px var(--red), 0 8px 22px rgba(40,30,10,.2)}
 .edit-foot{max-width:900px;margin:14px auto 0;display:flex;justify-content:space-between;gap:14px;font-size:12.5px;color:rgba(233,226,208,.55);flex-wrap:wrap}
+/* СчётчикShown только после ответа API: до него в панели пустого блока нет. */
+.visitors{display:none}
+.visitors.on{display:inline-flex;align-items:center;gap:6px;font-size:12px;color:rgba(233,226,208,.65);white-space:nowrap;padding:4px 10px;border:1px solid rgba(201,162,75,.2);border-radius:3px}
+.visitors i{display:inline-block;width:7px;height:7px;border-radius:50%;background:var(--gold);margin-right:2px}
 .status{display:inline-flex;align-items:center;gap:8px;font-size:13px;color:rgba(233,226,208,.8)}
 .status i{width:9px;height:9px;border-radius:50%;background:#6fae6f;display:inline-block;transition:background .3s}
 .status.saving i{background:var(--gold);animation:pulse 1s ease infinite}
@@ -348,6 +352,7 @@ html.remote #btnEdit,html.remote #btnPublish{display:none!important}
     <button class="bbtn" id="btnPublish" title="Выложить правки на GitHub Pages">⇧ Опубликовать</button>
     <button class="bbtn" id="btnExport" title="Скачать book.json и (если заполнена) book.en.json">⤓ Копия книги</button>
     <button class="bbtn" id="btnRestore" title="Загрузить черновик/копию книги">⤒ Восстановить</button>
+    <div class="visitors" id="visitors"></div>
   </header>
   <div class="layout">
     <aside id="edSide">
@@ -1117,6 +1122,7 @@ function enterEditor(){
   if(!findCh(currentId)) currentId=(curBook().chapters[0]||{}).id||null;
   openChapterEdit(currentId);
   pubProbe().then(function(st){ pubSrv=st; pubDot(); });
+  visRead();
 }
 function buildChapList(){
   var cb=curBook(), list=$('#chapList'); list.innerHTML='';
@@ -1508,10 +1514,53 @@ function confirmBox(title,text,onYes){
 document.addEventListener('keydown',function(e){ if(e.key==='Escape'){closeModal();hideImgTools()} });
 document.addEventListener('keydown',function(e){ if((e.ctrlKey||e.metaKey)&&e.key.toLowerCase()==='s'){e.preventDefault();collectEdit();persistBook();setStatus('saved');toast('Сохранено.')} });
 
+/* Счётчик посещений опубликованной страницы. Своей базы у GitHub Pages нет,
+   поэтому счётчик ведёт бесплатный Abacus: /hit/ увеличивает значение и сразу
+   его возвращает, /get/ только читает, регистрация не нужна. Ключи — пара
+   namespace/key по 3–64 символа из [A-Za-z0-9_-.].
+
+   Считаем только чужие просмотры: published-сборка (!LOCAL) делает /hit/,
+   локальный кабинет — /get/, иначе автор накручивал бы счётчик каждым своим
+   открытием файла и перестал бы видеть реальную картину. */
+var VIS_NS='pereplet-bfmsk', VIS_KEY='views';
+var VIS_API='https://abacus.jasoncameron.dev/';
+function showVis(v,note){
+  var el=$('#visitors'); if(!el)return;
+  el.className='visitors on';
+  if(note){ el.innerHTML='<i></i><span>'+esc(note)+'</span>'; el.title=note; return }
+  el.innerHTML='<i></i><span>'+esc(v)+' посещ.</span>';
+  el.title='Посещений опубликованной страницы: '+v;
+}
+function visFetch(path){
+  return fetch(VIS_API+path,{cache:'no-store'}).then(function(r){
+    if(!r.ok)throw new Error('http '+r.status);
+    return r.json();
+  }).then(function(d){
+    if(!d||typeof d.value!=='number')throw new Error('bad response');
+    return d.value;
+  });
+}
+/* Читатель открыл книгу — visit засчитан, ответ нам не нужен.
+   Считаем сессии, а не показы: метка живёт в sessionStorage, то есть F5 и
+   переходы по главам счётчик не накручивают, а новая вкладка (или заход через
+   время) даёт +1. В localStorage метку держать нельзя: автор годами не видел бы
+   изменения после первого открытия. */
+var VIS_SEEN='pereplet.visited';
+function visHit(){
+  try{ if(sessionStorage.getItem(VIS_SEEN))return; sessionStorage.setItem(VIS_SEEN,'1') }catch(e){}
+  visFetch('hit/'+VIS_NS+'/'+VIS_KEY).catch(function(){});
+}
+/* Автор зашёл в кабинет — показываем накопленное. */
+function visRead(){
+  visFetch('get/'+VIS_NS+'/'+VIS_KEY).then(showVis).catch(function(){ showVis(null,'счётчик недоступен') });
+}
+
 /* старт: сначала поднимаем книжные ключи из IndexedDB, иначе lsGet(bookKey())
    вернёт пустоту и показат демо-версию вместо сохранённой книги */
 initCred(); migrateKeys(); applyFs();
 prepareStore().then(dropDemoCache).then(function(){ applyLang(lang) });
+/* Опубликованное издание засчитывает читателя; локальный кабинет — нет. */
+if(!LOCAL)visHit();
 })();
 </script>
 </body>
