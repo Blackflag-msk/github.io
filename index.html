@@ -1516,10 +1516,10 @@ document.addEventListener('keydown',function(e){ if((e.ctrlKey||e.metaKey)&&e.ke
    открытием файла и перестал бы видеть реальную картину. */
 var VIS_NS='pereplet-bfmsk', VIS_KEY='views';
 var VIS_API='https://abacus.jasoncameron.dev/';
-function showVis(v,note){
+function showVis(v,note,title){
   var el=$('#visitors'); if(!el)return;
   el.className='visitors on';
-  if(note){ el.innerHTML='<i></i><span>'+esc(note)+'</span>'; el.title=note; return }
+  if(note){ el.innerHTML='<i></i><span>'+esc(note)+'</span>'; el.title=title||note; return }
   el.innerHTML='<i></i><span>'+esc(v)+' посещ.</span>';
   el.title='Посещений опубликованной страницы: '+v;
 }
@@ -1531,6 +1531,13 @@ function visFetch(path){
     if(!d||typeof d.value!=='number')throw new Error('bad response');
     return d.value;
   });
+}
+/* Браузер запрещает fetch из страницы file:// (origin «null»), поэтому
+   кабинет, открытый двойным кликом, счётчик не увидит — нужен node serve.js. */
+function visNote(e){
+  if(location.protocol==='file:')return['счётчик: запускайте через serve.js','Браузер блокирует запросы со страницы file://. Запустите node serve.js и откройте http://localhost:8123'];
+  if(e&&e.name==='TypeError')return['счётчик: нет связи','Сервер статистики недоступен или запрос заблокирован (сеть, блокировщик)'];
+  return['счётчик недоступен','Сервер статистики ответил ошибкой: '+(e&&e.message?e.message:'неизвестно')];
 }
 /* Читатель открыл книгу — visit засчитан, ответ нам не нужен.
    Считаем сессии, а не показы: метка живёт в sessionStorage, то есть F5 и
@@ -1544,7 +1551,8 @@ function visHit(){
 }
 /* Автор зашёл в кабинет — показываем накопленное. */
 function visRead(){
-  visFetch('get/'+VIS_NS+'/'+VIS_KEY).then(showVis).catch(function(){ showVis(null,'счётчик недоступен') });
+  var n=visNote(); if(location.protocol==='file:'){ showVis(null,n[0],n[1]); return }
+  visFetch('get/'+VIS_NS+'/'+VIS_KEY).then(showVis).catch(function(e){ var m=visNote(e); showVis(null,m[0],m[1]) });
 }
 
 /* старт: сначала поднимаем книжные ключи из IndexedDB, иначе lsGet(bookKey())
