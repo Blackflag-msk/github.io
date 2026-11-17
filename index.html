@@ -622,6 +622,9 @@ function emptyBook(){return {title:'',author:'',chapters:[]}}
 var books = {ru:null, en:null}, mark=null, set=lsGet(LS_SET)||{fs:19};
 var mode='read', currentId=null, savedRange=null;
 var edLang='ru'; // какую версию редактируем в кабинете
+/* Текущая глава запоминается отдельно для каждой версии: деревья глав RU и EN
+   независимы, один и тот же id не может быть «текущим» для обеих. */
+var edCurId={ru:null,en:null};
 
 function curBook(){ return books[edLang] }
 function readerBook(){ return books[lang] }
@@ -1053,45 +1056,27 @@ document.addEventListener('keydown',function(e){ if(mode!=='read')return; if(e.k
 /* ---------- редактор: работа с RU и EN версиями ---------- */
 var edTitle=$('#edTitle'), edBody=$('#edBody');
 
-/* ANGL. версия живёт независимо: зеркалим структуру RU только при первом создании
-   (пока в EN нет ни текста, ни заголовков). Иначе главы двух версий могут расходиться. */
-function enHasContent(en){
-  if(!en||!Array.isArray(en.chapters))return false;
-  for(var i=0;i<en.chapters.length;i++){ var c=en.chapters[i]; if(words(c.html||'')>0||(c.title||'').trim())return true }
-  return false;
-}
-function mirrorEn(en){
-  var ru=getBookObj('ru');
-  if(!ru||!ru.chapters)return en;
-  if(!en)en={title:'',author:'',chapters:[]};
-  if(!Array.isArray(en.chapters))en.chapters=[];
-  if(enHasContent(en))return en;
-  var out=[];
-  ru.chapters.forEach(function(rch){
-    out.push({id:rch.id,title:'',html:''});
-  });
-  en.chapters=out;
-  return en;
-}
+/* RU и EN живут полностью независимо: у каждой версии свой список глав, свои id и
+   свой порядок. Структурные правки в одной версии никогда не затрагивают другую. */
 function getBookObj(l){ return books[l]||lsGet('pereplet.book.'+l) }
-function otherLang(){ return edLang==='ru'?'en':'ru' }
-function otherBook(){ return getBookObj(otherLang()) }
-function saveOther(b){ var l=otherLang(); if(b){books[l]=b;lsSet('pereplet.book.'+l,b)} markDirty(l) }
-/* Структурные правки (глава добавлена/удалена/перенесена) отражаем во второй версии
-   по id, а не по индексу: списки глав языков могут расходиться. */
-function otherIdxOf(id){ var o=otherBook(); if(!o||!Array.isArray(o.chapters))return -1;
-  for(var i=0;i<o.chapters.length;i++) if(o.chapters[i].id===id)return i; return -1 }
-function otherStruct(fn){ var o=otherBook(); if(!o||!Array.isArray(o.chapters)){o={title:'',author:'',chapters:[]}} fn(o); saveOther(o) }
 function loadEdBook(l){
   edLang=l;
   var b=lsGet('pereplet.book.'+l);
-  if(!b){
-    if(l==='ru'){ b=emptyBook() }
-    else { b=mirrorEn(null) }
-    lsSet('pereplet.book.'+l,b);
-  } else if(l==='en'){ b=mirrorEn(b); lsSet('pereplet.book.en',b); }
+  if(!b)b=emptyBook();
+  if(!Array.isArray(b.chapters))b.chapters=[];
   books[l]=b;
-  if(books[l]&&(!currentId||!findCh(currentId)))currentId=(books[l].chapters[0]||{}).id||null;
+  var want=edCurId[l];
+  if(!want||indexOfIn(b,want)<0)want=(indexOfIn(b,currentId)>=0?currentId:((b.chapters[0]||{}).id||null));
+  currentId=want;
+}
+function indexOfIn(b,id){ for(var i=0;i<b.chapters.length;i++)if(b.chapters[i].id===id)return i; return -1 }
+/* Пустая версия недопустима: без глав редактору не на чём работать. Глава создаётся
+   только в активной версии и никогда не прокидывается во вторую. */
+function ensureEdChapter(){
+  var cb=curBook(); if(!cb)return;
+  if(!cb.chapters.length){ cb.chapters.push({id:uid(),title:'Новая глава',html:''}); persistBook(); }
+  if(!findCh(currentId))currentId=cb.chapters[0].id;
+  edCurId[edLang]=currentId;
 }
 function applyEditorLangUI(){
   $('#btnEdRu').classList.toggle('on',edLang==='ru');
@@ -1105,9 +1090,11 @@ function applyEditorLangUI(){
 function switchEdLang(l){
   if(l===edLang)return;
   collectEdit(); persistBook();
+  edCurId[edLang]=currentId;
   loadEdBook(l);
+  ensureEdChapter();
   buildChapList();
-  if(currentId)openChapterEdit(currentId); else openChapterEdit((curBook().chapters[0]||{}).id);
+  openChapterEdit(currentId);
   applyEditorLangUI(); setStatus('saved');
 }
 $('#btnEdRu').addEventListener('click',function(){switchEdLang('ru')});
@@ -1116,10 +1103,9 @@ $('#btnEdEn').addEventListener('click',function(){switchEdLang('en')});
 function enterEditor(){
   edLang='ru';
   loadEdBook('ru');
-  if(!curBook().chapters.length){ curBook().chapters.push({id:uid(),title:'',html:''}); persistBook(); }
+  ensureEdChapter();
   applyEditorLangUI();
   buildChapList();
-  if(!findCh(currentId)) currentId=(curBook().chapters[0]||{}).id||null;
   openChapterEdit(currentId);
   pubProbe().then(function(st){ pubSrv=st; pubDot(); });
   visRead();
@@ -1144,14 +1130,11 @@ function buildChapList(){
 function moveCh(i,d){
   var cb=curBook(), j=i+d; if(j<0||j>=cb.chapters.length)return;
   var a=cb.chapters[i]; cb.chapters[i]=cb.chapters[j]; cb.chapters[j]=a;
-  var id=cb.chapters[j].id;
-  otherStruct(function(o){ var k=otherIdxOf(id), m=k+d; if(k>=0&&m>=0&&m<o.chapters.length){ var y=o.chapters[k]; o.chapters[k]=o.chapters[m]; o.chapters[m]=y } });
   persistBook(); buildChapList();
 }
 function askDelete(ch,i){
-  confirmBox('Удалить главу '+(i+1)+'?','Глава «'+(ch.title||'Без названия')+'» будет удалена из обеих языковых версий. Если сомневаетесь — сначала скачайте копию книги.',function(){
+  confirmBox('Удалить главу '+(i+1)+'?','Глава «'+(ch.title||'Без названия')+'» будет удалена из '+edLang.toUpperCase()+'-версии. Вторая языковая версия не изменится. Если сомневаетесь — сначала скачайте копию книги.',function(){
     var cb=curBook(); cb.chapters.splice(i,1);
-    otherStruct(function(o){ var k=otherIdxOf(ch.id); if(k>=0)o.chapters.splice(k,1) });
     persistBook();
     if(!cb.chapters.length) cb.chapters.push({id:uid(),title:'Новая глава',html:''});
     if(currentId===ch.id) currentId=cb.chapters[Math.min(i,cb.chapters.length-1)].id;
@@ -1159,7 +1142,7 @@ function askDelete(ch,i){
   });
 }
 function openChapterEdit(id){
-  var ch=findCh(id); if(!ch)return; currentId=id; hideImgTools();
+  var ch=findCh(id); if(!ch)return; currentId=id; edCurId[edLang]=id; hideImgTools();
   edTitle.innerHTML=esc(ch.title||'');
   edTitle.className=ch.ts&&ch.ts!=='classic'?' ts-'+ch.ts:'';
   edBody.innerHTML=ch.html||'';
@@ -1183,10 +1166,9 @@ $('#btnChaps').addEventListener('click',function(){document.body.classList.toggl
 $('#btnAddChapter').addEventListener('click',function(){
   var ch={id:uid(),title:'Новая глава',html:''}, i=indexOf(currentId);
   curBook().chapters.splice(i+1,0,ch);
-  otherStruct(function(o){ var k=otherIdxOf(currentId); o.chapters.splice(k+1,0,{id:ch.id,title:'',html:''}) });
   persistBook();
-  currentId=ch.id; buildChapList(); openChapterEdit(ch.id);
-  toast('Глава добавлена в обе языковые версии. Введите название и текст.'); edTitle.focus();
+  currentId=ch.id; edCurId[edLang]=ch.id; buildChapList(); openChapterEdit(ch.id);
+  toast('Глава добавлена в '+edLang.toUpperCase()+'-версию. Вторая версия не изменилась. Введите название и текст.'); edTitle.focus();
 });
 $('#inBookTitle').addEventListener('input',debounce(function(){curBook().title=this.value;persistBook()},400));
 $('#inBookAuthor').addEventListener('input',debounce(function(){curBook().author=this.value;persistBook()},400));
@@ -1365,7 +1347,7 @@ function ingestDocument(name,html){
   if(edLang==='ru'){ createImportChapter(name,html); return }
   var cb=curBook();
   openModal('<h3>Импорт английского текста</h3><p>Куда поместить <b>«'+esc(name)+'»</b>? В книге сейчас '+cb.chapters.length+' глав(ы).</p>'+
-    '<button class="m-choice" id="impSplit"><b>Разнести по всем главам</b>Документ разбивается по его заголовкам: каждая часть — в соответствующую главу (1-я часть → 1-я глава и т.д.). Подходит для цельного английского документа.</button>'+
+    '<button class="m-choice" id="impSplit"><b>Разнести по всем главам</b>Документ разбивается по его заголовкам: каждая часть — в свою главу EN (1-я часть → 1-я глава и т.д.). Если частей больше, чем глав, в EN-версии добавятся новые главы. Число глав RU-версии ни на что не влияет.</button>'+
     '<button class="m-choice" id="impCur"><b>Только в текущую главу</b>Весь документ попадёт в главу «'+esc((findCh(currentId)||{}).title||'')+'».</button>'+
     '<div class="m-actions"><button class="btn ink small" id="mNo">Отмена</button></div>');
   $('#mNo').addEventListener('click',closeModal);
@@ -1384,7 +1366,8 @@ function splitHtmlByHeadings(html,n){
   if(cur.length||lastHead)chunks.push({title:lastHead||'',html:cur});
   chunks=chunks.filter(function(c){return c.html.length>0});
   if(!chunks.length)chunks.push({title:'',html:[div]});
-  while(chunks.length>n){
+  /* n<=0 означает «не подгонять под существующие главы» — документ сам задаст разбиение. */
+  while(n>0&&chunks.length>n){
     var last=chunks.pop();
     chunks[chunks.length-1].html=chunks[chunks.length-1].html.concat(last.html);
   }
@@ -1394,18 +1377,25 @@ function splitHtmlByHeadings(html,n){
     return {title:c.title,html:d.innerHTML};
   });
 }
+function clipTitle(s){ s=(s||'').trim(); return s.length>120?s.slice(0,120):s }
 function importEnSplit(name,html){
-  var cb=curBook(), parts=splitHtmlByHeadings(html,cb.chapters.length);
-  var n=Math.min(parts.length,cb.chapters.length),filled=0;
-  for(var i=0;i<n;i++){
-    var ch=cb.chapters[i];
-    ch.html=parts[i].html;
-    var tt=parts[i].title;
-    if(tt)ch.title=tt.length>120?tt.slice(0,120):tt;
-    filled++;
+  var cb=curBook();
+  /* Число и заголовки глав EN задаёт сам документ: разбиение не подгоняется под
+     количество RU-глав, а лишние части становятся новыми главами EN-версии. */
+  var parts=splitHtmlByHeadings(html,0),filled=0,added=0;
+  for(var i=0;i<parts.length;i++){
+    if(i<cb.chapters.length){
+      var ch=cb.chapters[i];
+      ch.html=parts[i].html;
+      if(parts[i].title)ch.title=clipTitle(parts[i].title);
+      filled++;
+    } else {
+      cb.chapters.push({id:uid(),title:clipTitle(parts[i].title),html:parts[i].html});
+      filled++; added++;
+    }
   }
   persistBook(); buildChapList(); openChapterEdit(currentId);
-  toast('Английский текст разнесён по главам: '+filled+' из '+cb.chapters.length+'. Проверьте и поправьте при необходимости.');
+  toast('Английский текст разнесён по главам: '+filled+(added?' (новых глав в EN: '+added+')':'')+'. Проверьте и поправьте при необходимости.');
 }
 function importEnCurrent(name,html){
   var ch=findCh(currentId); if(!ch)return;
@@ -1451,22 +1441,22 @@ function runPdfImport(modo){
 function createImportChapter(title,html){
   var ch={id:uid(),title:title||'Импортированная глава',html:html}, i=indexOf(currentId);
   curBook().chapters.splice(i+1,0,ch);
-  otherStruct(function(o){ var k=otherIdxOf(currentId); o.chapters.splice(k+1,0,{id:ch.id,title:'',html:''}) });
-  if(persistBook()){ currentId=ch.id; buildChapList(); openChapterEdit(ch.id); document.body.classList.remove('chap-open'); toast('Глава «'+ch.title+'» добавлена ('+words(html)+' слов).'); }
+  if(persistBook()){ currentId=ch.id; edCurId[edLang]=ch.id; buildChapList(); openChapterEdit(ch.id); document.body.classList.remove('chap-open'); toast('Глава «'+ch.title+'» добавлена в '+edLang.toUpperCase()+'-версию ('+words(html)+' слов).'); }
 }
 
 /* ---------- публикация и восстановление ---------- */
+/* EN-версия публикуется целиком из своего дерева: ни число глав, ни порядок, ни
+   оформление заголовка (ts) не подтягиваются из RU-версии. */
 function buildEnBookForPublish(){
   var en=getBookObj('en'); if(!en)return null;
   var ru=getBookObj('ru');
   var chs=[];
   (en.chapters||[]).forEach(function(c){
-    if(words(c.html||'')>0)chs.push({id:c.id,title:c.title||'',html:c.html,ts:(ru&&findInRu(ru,c.id))?findInRu(ru,c.id).ts:undefined});
+    if(words(c.html||'')>0)chs.push({id:c.id,title:c.title||'',html:c.html,ts:c.ts});
   });
   if(!chs.length)return null;
   return {title:en.title||(ru?ru.title:''),author:en.author||(ru?ru.author:''),chapters:chs};
 }
-function findInRu(ru,id){ for(var i=0;i<ru.chapters.length;i++)if(ru.chapters[i].id===id)return ru.chapters[i]; return null }
 function downloadJson(obj,name){
   var blob=new Blob([JSON.stringify(obj,null,1)],{type:'application/json'});
   var a=document.createElement('a');a.href=URL.createObjectURL(blob);a.download=name;
@@ -1493,7 +1483,7 @@ $('#fileRestore').addEventListener('change',function(){
       if(!b||!Array.isArray(b.chapters))throw new Error();
       confirmBox('Заменить текущую книгу ('+edLang.toUpperCase()+')?','Будет загружена копия: «'+(b.title||'Без названия')+'», глав: '+b.chapters.length+'. Текущий текст этой версии будет перезаписан.',function(){
         books[edLang]=b; lsSet('pereplet.book.'+edLang,b); markDirty(edLang);
-        currentId=(b.chapters[0]||{}).id||null;
+        currentId=(b.chapters[0]||{}).id||null; edCurId[edLang]=currentId;
         buildChapList(); if(currentId)openChapterEdit(currentId);
         applyEditorLangUI();
         toast('Книга восстановлена из копии. Не забудьте опубликовать её («⤓ Копия книги»).');
